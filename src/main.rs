@@ -40,7 +40,7 @@ impl Handler {
                     .filter_map(|(i, verse)| {
                         let verse_num = verse.get("verset").and_then(Value::as_u64)?;
                         let text = verse.get("text").and_then(Value::as_str)?;
-                        Some(format!("* {} {}", verse_num, text))
+                        Some(format!("> **{}:{}** {}", chapter, verse_num, text))
                     })
                     .collect();
                 if verse_texts.is_empty() {
@@ -51,7 +51,7 @@ impl Handler {
             })
             .map(|verses_text| {
                 format!(
-                    "> # {}\n> ## Capitolul: {}\n {}",
+                    "## {}\n ### Capitolul {}\n {}",
                     book, chapter, verses_text
                 )
             })
