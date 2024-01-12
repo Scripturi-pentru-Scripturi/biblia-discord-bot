@@ -103,7 +103,7 @@ impl EventHandler for Handler {
             if let (Some(book), Some(chapter), Some(verse_info)) =
                 (parts.get(0), parts.get(1), parts.get(2))
             {
-                let chapter: usize = chapter.parse().expect("Invalid chapter number.");
+                let chapter: usize = chapter.parse().expect("Numar de capitol invalid.");
                 let (start_verse, end_verse) = parse_verse_info(verse_info);
 
                 if let Some(book_key) = self.find_book_name(book) {
@@ -111,24 +111,24 @@ impl EventHandler for Handler {
                         self.get_verses(&book_key, chapter, start_verse, end_verse)
                     {
                         if let Err(why) = msg.channel_id.say(&ctx.http, &verses).await {
-                            eprintln!("Error sending message: {:?}", why);
+                            eprintln!("Eroare la trimiterea mesajului: {:?}", why);
                         }
                     } else {
                         if let Err(why) = msg
                             .channel_id
-                            .say(&ctx.http, "Couldn't find the verse(s).")
+                            .say(&ctx.http, "Nu am gasit referinta.")
                             .await
                         {
-                            eprintln!("Error sending message: {:?}", why);
+                            eprintln!("Eroare la trimiterea mesajului: {:?}", why);
                         }
                     }
                 } else {
                     if let Err(why) = msg
                         .channel_id
-                        .say(&ctx.http, "Couldn't find the book.")
+                        .say(&ctx.http, "Nu am gasit cartea.")
                         .await
                     {
-                        eprintln!("Error sending message: {:?}", why);
+                        eprintln!("Eroare la trimiterea mesajului: {:?}", why);
                     }
                 }
             }
