@@ -98,7 +98,7 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if let Some(content) = msg.content.strip_prefix("☦️ :") {
+        if let Some(content) = msg.content.strip_prefix("!biblia") {
             let parts: Vec<&str> = content.split(':').map(str::trim).collect();
             if let (Some(book), Some(chapter), Some(verse_info)) =
                 (parts.get(0), parts.get(1), parts.get(2))
