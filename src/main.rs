@@ -110,10 +110,25 @@ impl EventHandler for Handler {
                     if let Some(verses) =
                         self.get_verses(&book_key, chapter, start_verse, end_verse)
                     {
-                        if let Err(why) = msg.channel_id.say(&ctx.http, &verses).await {
-                            eprintln!("Eroare la trimiterea mesajului: {:?}", why);
+                        let verses: Vec<&str> = verses.split('\n').collect(); // Assuming each verse is on a new line
+                        let mut message_chunk = String::new();
+
+                        for verse in verses {
+                            if message_chunk.len() + verse.len() + 1 > 2090 {
+                            // Send the current chunk and start a new one
+                                if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
+                                    eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
+                                }   
+                                message_chunk.clear();
+                            }   
                         }
+                        if !message_chunk.is_empty() {
+                            if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
+                                eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
+                            }
+                        }                   
                     } else {
+
                         if let Err(why) = msg
                             .channel_id
                             .say(&ctx.http, "Nu am gasit referinta.")
@@ -133,15 +148,6 @@ impl EventHandler for Handler {
                 }
             }
         }
-        fn parse_verse_info(verse_info: &str) -> (usize, usize) {
-            let verses: Vec<&str> = verse_info.split('-').collect();
-            let start_verse = verses[0].parse().unwrap_or(0);
-            let end_verse = verses
-                .get(1)
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(start_verse);
-            (start_verse, end_verse)
-        }
     }
 
     async fn ready(&self, _: Context, ready: Ready) {
@@ -149,6 +155,15 @@ impl EventHandler for Handler {
     }
 }
 
+fn parse_verse_info(verse_info: &str) -> (usize, usize) {
+    let verses: Vec<&str> = verse_info.split('-').collect();
+    let start_verse = verses[0].parse().unwrap_or(0);
+    let end_verse = verses
+        .get(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(start_verse);
+    (start_verse, end_verse)
+}
 #[tokio::main]
 async fn main() {
     let token = env::var("DISCORD_TOKEN")
