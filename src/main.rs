@@ -110,15 +110,21 @@ impl EventHandler for Handler {
                     if let Some(verses) =
                         self.get_verses(&book_key, chapter, start_verse, end_verse)
                     {
-                        let mut chars = verses.chars().peekable();
-                        while chars.peek().is_some() {
-                            let mut message_chunk = String::with_capacity(2000);
-                            while let Some(ch) = chars.next() {
-                                message_chunk.push(ch);
-                                if message_chunk.len() > 2000 && chars.peek().map_or(false, |next_ch| next_ch.is_whitespace()) {
-                                    break;
-                                }
-                            }
+                        let verses: Vec<&str> = verses.split('\n').collect(); // Assuming each verse is on a new line
+                        let mut message_chunk = String::new();
+
+                        for verse in verses {
+                            if message_chunk.len() + verse.len() + 1 > 2090 {
+                            // Send the current chunk and start a new one
+                                if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
+                                    eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
+                                }   
+                                message_chunk.clear();
+                            }   
+                            message_chunk.push_str(verse);
+                            message_chunk.push('\n'); // Preserve line breaks between verses
+                        }
+                        if !message_chunk.is_empty() {
                             if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
                                 eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
                             }
