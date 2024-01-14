@@ -121,6 +121,8 @@ impl EventHandler for Handler {
                                 }   
                                 message_chunk.clear();
                             }   
+                            message_chunk.push_str(verse);
+                            message_chunk.push('\n'); // Preserve line breaks between verses
                         }
                         if !message_chunk.is_empty() {
                             if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
