@@ -89,7 +89,7 @@ impl EventHandler for Handler {
             let _ = msg.content.strip_prefix("!biblia-llm");
             let api_key = dotenv::var("OPENAI_API_KEY").expect("Cheia de API nu e setata in varibila OPENAI_API_KEY.");
             let model = "gpt-3.5-turbo";
-            let input = msg.content.strip_prefix("!test-llm").expect("Mesajul nu e in format valid");
+            let input = msg.content.strip_prefix("!biblia-llm").expect("Mesajul nu e in format valid");
             let response = llm(&api_key, input, model).expect("Nu am putut obtine raspunsul de la LLM");
             let bible_json = fs::read_to_string("biblia.json").unwrap();
             let bible: Map<String, Value> = serde_json::from_str(&bible_json).expect("Nu am putut citi biblia");
