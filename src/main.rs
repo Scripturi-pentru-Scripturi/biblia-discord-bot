@@ -1,188 +1,176 @@
+use serde_json::json;
 use serde_json::{Map, Value};
-use serenity::{
-    async_trait,
-    model::{channel::Message, gateway::Ready},
-    prelude::*,
-};
+use serenity::async_trait;
+use serenity::model::channel::Message;
+use serenity::model::gateway::Ready;
+use serenity::prelude::*;
+use std::error::Error;
 use std::{env, fs};
 use strsim::jaro_winkler;
 
-struct Handler {
-    bible: Map<String, Value>,
+struct Handler;
+
+fn find_book_name(bible: &Map<String, Value>, name: &str) -> String {
+    let mut best_score = 0.0;
+    let mut best_book = "";
+    for (book_name, book_data) in bible.iter() {
+        let score = jaro_winkler(name, book_name);
+        if score > best_score {
+            best_score = score;
+            best_book = book_name;
+        }
+        if let Some(alternatives) = book_data.get("alternative").and_then(Value::as_array) {
+            for alternative in alternatives.iter().filter_map(Value::as_str) {
+                let score = jaro_winkler(name, alternative);
+                if score > best_score {
+                    best_score = score;
+                    best_book = book_name;
+                }
+            }
+        }
+    }
+
+    if best_score == 0.0 {
+        eprintln!("Nu am gasit nici o carte cu numele '{}' in biblie.", name);
+        return bible.keys().next().unwrap().to_string();
+    }
+
+    best_book.to_string()
 }
 
-impl Handler {
-    fn new(bible_file: &str) -> Self {
-        let data =
-            fs::read_to_string(bible_file).expect("Eroare in citirea fisierului biblia.json.");
-        let json: Value = serde_json::from_str(&data).expect("Eroare in parsare JSON");
-        let bible = json.as_object().expect("JSON nu este obiect").clone();
-        Handler { bible }
-    }
-    fn get_verses(
-        &self,
-        book: &str,
-        chapter: usize,
-        start_verse: usize,
-        end_verse: usize,
-    ) -> Option<String> {
-        self.bible
-            .get(book)
-            .and_then(|b| b.get("capitole").and_then(Value::as_object))
-            .and_then(|c| c.get(&chapter.to_string()).and_then(Value::as_object))
-            .and_then(|v| v.get("versete").and_then(Value::as_array))
-            .and_then(|verses| {
-                let verse_texts: Vec<String> = verses
-                    .iter()
-                    .enumerate()
-                    .skip(start_verse - 1)
-                    .take(end_verse - start_verse + 1)
-                    .filter_map(|(i, verse)| {
-                        let verse_num = verse.get("verset").and_then(Value::as_u64)?;
-                        let text = verse.get("text").and_then(Value::as_str)?;
-                        Some(format!("> **{}:{}** {}", chapter, verse_num, text))
-                    })
-                    .collect();
-                if verse_texts.is_empty() {
-                    None
-                } else {
-                    Some(verse_texts.join("\n"))
-                }
-            })
-            .map(|verses_text| {
-                format!(
-                    "## {}\n ### Capitolul {}\n {}",
-                    book, chapter, verses_text
-                )
-            })
-    }
+fn get_verses(bible: &Map<String, Value>, book: &str, chapter: usize, start_verse: usize, end_verse: usize) -> Option<Vec<String>> {
+    bible
+        .get(book)
+        .and_then(|book_data| book_data.get("capitole").and_then(Value::as_object))
+        .and_then(|chapters| chapters.get(&chapter.to_string()).and_then(Value::as_object))
+        .and_then(|verses_data| verses_data.get("versete").and_then(Value::as_array))
+        .map(|verses| {
+            verses
+                .iter()
+                .enumerate()
+                .skip(start_verse - 1)
+                .take(end_verse - start_verse + 1)
+                .filter_map(|(_i, verse)| {
+                    let verset_num = verse.get("verset").and_then(Value::as_u64)?;
+                    let text = verse.get("text").and_then(Value::as_str)?;
+                    Some(format!("> **{}:{}** {}", chapter, verset_num, text))
+                })
+                .collect()
+        })
+}
 
-    fn find_book_name(&self, input: &str) -> Option<String> {
-        let mut best_match: Option<(String, f64)> = None;
-        for (book, data) in &self.bible {
-            if book == input {
-                return Some(book.to_string());
-            }
-            if let Some(alternatives) = data.get("alternative").and_then(|v| v.as_array()) {
-                for alt in alternatives.iter().filter_map(|v| v.as_str()) {
-                    if alt == input {
-                        return Some(book.to_string());
-                    }
-                }
-            }
+fn parse_reference(reference: &str, llm: bool) -> (&str, usize, (usize, usize)) {
+    let parts: Vec<&str> = reference.split(':').collect();
+    let book_name = parts.get(0).expect("Cartea nu e specificata");
+    let chapter_arg = parts.get(1).expect("Capitolul nu e specificat");
+    let chapter: usize = chapter_arg.parse().expect("Capitolul nu e in format valid");
+    let mut start_verse = 1;
+    let mut end_verse = usize::MAX;
+    if parts.len() == 3 {
+        if let Some(dash) = parts[2].find('-') {
+            let (start, end) = parts[2].split_at(dash);
+            start_verse = start.parse().expect("Versetul de inceput nu e in format valid");
+            end_verse = end[1..].parse().expect("Versetul de sfarsit nu e in format valid");
+        } else {
+            start_verse = parts[2].parse().expect("Versetul nu e in format valid");
+            end_verse = start_verse;
         }
-        for (book, _) in &self.bible {
-            let score = jaro_winkler(input, book);
-            if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
-                best_match = Some((book.to_string(), score));
-            }
-
-            if let Some(alternatives) = self
-                .bible
-                .get(book)
-                .and_then(|b| b.get("alternative").and_then(|a| a.as_array()))
-            {
-                for alternative in alternatives.iter().filter_map(|a| a.as_str()) {
-                    let score = jaro_winkler(input, alternative);
-                    if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
-                        best_match = Some((book.to_string(), score));
-                    }
-                }
-            }
-        }
-
-        best_match.map(|(book, _)| book)
+    } else if parts.len() > 3 {
+        panic!("Referinta nu e in format valid, foloseste ':' pentru a separa capitolul de verset si '-' pentru a separa versetele");
     }
+    (*book_name, chapter, (start_verse, end_verse))
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if let Some(content) = msg.content.strip_prefix("!biblia") {
-            let parts: Vec<&str> = content.split(':').map(str::trim).collect();
-            if let (Some(book), Some(chapter), Some(verse_info)) =
-                (parts.get(0), parts.get(1), parts.get(2))
-            {
-                let chapter: usize = chapter.parse().expect("Numar de capitol invalid.");
-                let (start_verse, end_verse) = parse_verse_info(verse_info);
+        if msg.content.starts_with("!biblia-llm") {
+            let _ = msg.content.strip_prefix("!biblia-llm");
+            let api_key = dotenv::var("OPENAI_API_KEY").expect("Cheia de API nu e setata in varibila OPENAI_API_KEY.");
+            let model = "gpt-3.5-turbo";
+            let input = msg.content.strip_prefix("!test-llm").expect("Mesajul nu e in format valid");
+            let response = llm(&api_key, input, model).expect("Nu am putut obtine raspunsul de la LLM");
+            let bible_json = fs::read_to_string("biblia.json").unwrap();
+            let bible: Map<String, Value> = serde_json::from_str(&bible_json).expect("Nu am putut citi biblia");
+            let (book_name, chapter_number, verse_range) = parse_reference(&response, true);
+            let found_book = find_book_name(&bible, book_name);
+            let verses = get_verses(&bible, &found_book, chapter_number, verse_range.0, verse_range.1);
+            if let Some(verses) = verses {
+                let response = format!("## {}\n ### Capitolul {}\n {}", found_book, chapter_number, verses.join("\n"));
+                if let Err(why) = msg.channel_id.say(&ctx.http, response).await {
+                    println!("Error sending message: {why:?}");
+                }
+            } else {
+                if let Err(why) = msg.channel_id.say(&ctx.http, "Nu am putut gasi versetul").await {
+                    println!("Error sending message: {why:?}");
+                }
+            }
+            return;
+        }
+        if msg.content.starts_with("!biblia") {
+            let _ = msg.content.strip_prefix("!biblia");
+            let bible_json = fs::read_to_string("biblia.json").unwrap();
+            let bible: Map<String, Value> = serde_json::from_str(&bible_json).expect("Nu am putut citi biblia");
+            let (book_name, chapter_number, verse_range) = parse_reference(&msg.content, false);
+            let found_book = find_book_name(&bible, book_name);
+            println!("Book: {}", found_book);
+            let verses = get_verses(&bible, &found_book, chapter_number, verse_range.0, verse_range.1);
+            println!("Verses: {:?}", verses);
 
-                if let Some(book_key) = self.find_book_name(book) {
-                    if let Some(verses) =
-                        self.get_verses(&book_key, chapter, start_verse, end_verse)
-                    {
-                        let verses: Vec<&str> = verses.split('\n').collect(); // Assuming each verse is on a new line
-                        let mut message_chunk = String::new();
-
-                        for verse in verses {
-                            if message_chunk.len() + verse.len() + 1 > 2090 {
-                            // Send the current chunk and start a new one
-                                if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
-                                    eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
-                                }   
-                                message_chunk.clear();
-                            }   
-                            message_chunk.push_str(verse);
-                            message_chunk.push('\n'); // Preserve line breaks between verses
-                        }
-                        if !message_chunk.is_empty() {
-                            if let Err(why) = msg.channel_id.say(&ctx.http, &message_chunk).await {
-                                eprintln!("Eroare la trimiterea fragmentului de mesaj: {:?}", why);
-                            }
-                        }                   
-                    } else {
-
-                        if let Err(why) = msg
-                            .channel_id
-                            .say(&ctx.http, "Nu am gasit referinta.")
-                            .await
-                        {
-                            eprintln!("Eroare la trimiterea mesajului: {:?}", why);
-                        }
-                    }
-                } else {
-                    if let Err(why) = msg
-                        .channel_id
-                        .say(&ctx.http, "Nu am gasit cartea.")
-                        .await
-                    {
-                        eprintln!("Eroare la trimiterea mesajului: {:?}", why);
-                    }
+            if let Some(verses) = verses {
+                let response = format!("## {}\n ### Capitolul {}\n {}", found_book, chapter_number, verses.join("\n"));
+                if let Err(why) = msg.channel_id.say(&ctx.http, response).await {
+                    println!("Error sending message: {why:?}");
+                }
+            } else {
+                if let Err(why) = msg.channel_id.say(&ctx.http, "Nu am putut gasi versetul").await {
+                    println!("Error sending message: {why:?}");
                 }
             }
         }
     }
 
     async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} este connectat!", ready.user.name);
+        println!("{} is connected!", ready.user.name);
     }
 }
 
-fn parse_verse_info(verse_info: &str) -> (usize, usize) {
-    let verses: Vec<&str> = verse_info.split('-').collect();
-    let start_verse = verses[0].parse().unwrap_or(0);
-    let end_verse = verses
-        .get(1)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(start_verse);
-    (start_verse, end_verse)
+fn llm(api_key: &str, input: &str, model: &str) -> Result<String, Box<dyn Error>> {
+    let client = reqwest::blocking::Client::new();
+    let system_prompt = "Esti un preot ortodox si imi raspunzi cu o singura referinta din biblia ortodoxa (atentie la psalmi!) Fc,Ies,Lv,Num,Dt,Ios,Jd,Rut,1Rg,2Rg,3Rg,4Rg,1Par,2Par,1Ezr,Ne,Est,Iov,Ps,Pr,Ecc,Cant,Is,Ir,Plg,Iz,Dn,Os,Am,Mi,Ioil,Avd,Ion,Naum,Avc,Sof,Ag,Za,Mal,Tob,Idt,Bar,Epist,Tin,3Ezr,Sol,Sir,Sus,Bel,1Mac,2Mac,3Mac,Man,Mt,Mc,Lc,In,FA,Rm,1Co,2Co,Ga,Ef,Flp,Col,1Tes,2Tes,1Tim,2Tim,Tit,Flm,Evr,Iac,1Ptr,2Ptr,1In,2In,3In,Iuda,Ap pe subiectul indicat. nu spui altceva inafara de referinta. formatul referintei este: Mt:10:20 sau Lc:20:2-3 sau Ap:1:2-4";
+    let request_body = json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": input}
+        ]
+    });
+
+    let response = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&request_body)
+        .send()?;
+
+    let response_text = response.json::<serde_json::Value>()?;
+
+    match response_text.get("error").and_then(|e| e.as_str()) {
+        Some(error) => Err(error.into()),
+        None => {
+            let answer = response_text["choices"][0]["message"]["content"].as_str().ok_or("No content found")?;
+            Ok(answer.to_string())
+        }
+    }
 }
+
 #[tokio::main]
 async fn main() {
-    let token = env::var("DISCORD_TOKEN")
-        .expect("Nu am gasit tokenul botului de in enviroment var DISCORD_TOKEN");
-    let bible_file = "biblia.json";
-
-    let handler = Handler::new(bible_file);
-
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
-    let mut client = Client::builder(&token, intents)
-        .event_handler(handler)
-        .await
-        .expect("Eroare la crearea clientului");
+    let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let mut client = Client::builder(&token, intents).event_handler(Handler).await.expect("Err creating client");
 
     if let Err(why) = client.start().await {
-        eprintln!("Eroare de la client: {:?}", why);
+        println!("Client error: {why:?}");
     }
 }
