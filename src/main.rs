@@ -61,6 +61,7 @@ fn get_verses(bible: &Map<String, Value>, book: &str, chapter: usize, start_vers
 
 fn parse_reference(reference: &str, llm: bool) -> (&str, usize, (usize, usize)) {
     let parts: Vec<&str> = reference.split(':').collect();
+    println!("Parts: {:?}", parts);
     let book_name = parts.get(0).expect("Cartea nu e specificata");
     let chapter_arg = parts.get(1).expect("Capitolul nu e specificat");
     let chapter: usize = chapter_arg.parse().expect("Capitolul nu e in format valid");
@@ -108,10 +109,10 @@ impl EventHandler for Handler {
             return;
         }
         if msg.content.starts_with("!biblia") {
-            let _ = msg.content.strip_prefix("!biblia");
+            let reference = msg.content.strip_prefix("!biblia").unwrap();
             let bible_json = fs::read_to_string("biblia.json").unwrap();
             let bible: Map<String, Value> = serde_json::from_str(&bible_json).expect("Nu am putut citi biblia");
-            let (book_name, chapter_number, verse_range) = parse_reference(&msg.content, false);
+            let (book_name, chapter_number, verse_range) = parse_reference(&reference, false);
             let found_book = find_book_name(&bible, book_name);
             println!("Book: {}", found_book);
             let verses = get_verses(&bible, &found_book, chapter_number, verse_range.0, verse_range.1);
