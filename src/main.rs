@@ -53,7 +53,7 @@ fn get_verses(bible: &Map<String, Value>, book: &str, chapter: usize, start_vers
                 .filter_map(|(_i, verse)| {
                     let verset_num = verse.get("verset").and_then(Value::as_u64)?;
                     let text = verse.get("text").and_then(Value::as_str)?;
-                    Some(format!("> **{}:{}** {}", chapter, verset_num, text))
+                    Some(format!("{}:{} {}", chapter, verset_num, text))
                 })
                 .collect()
         })
@@ -61,10 +61,23 @@ fn get_verses(bible: &Map<String, Value>, book: &str, chapter: usize, start_vers
 
 fn parse_reference(reference: &str, llm: bool) -> (&str, usize, (usize, usize)) {
     let parts: Vec<&str> = reference.split(':').collect();
-    println!("Parts: {:?}", parts);
-    let book_name = parts.get(0).expect("Cartea nu e specificata");
-    let chapter_arg = parts.get(1).expect("Capitolul nu e specificat");
-    let chapter: usize = chapter_arg.parse().expect("Capitolul nu e in format valid");
+    let book_name = parts.get(0).unwrap_or_else(|| {
+        eprintln!("Cartea nu e specificata. Foloseste ':' pentru a separa cartea de capitol si '-' pentru a separa versetele");
+        std::process::exit(1);
+    });
+
+    let chapter_arg = parts.get(1).unwrap_or_else(|| {
+        if llm {
+            eprintln!("{}", reference);
+            std::process::exit(1);
+        }
+        eprintln!("Capitolul nu e specificat. Foloseste ':' pentru a separa cartea de capitol si '-' pentru a separa versetele");
+        std::process::exit(1);
+    });
+    let chapter: usize = chapter_arg.parse().unwrap_or_else(|_| {
+        eprintln!("Capitolul nu e specificat. Foloseste ':' pentru a separa cartea de capitol si '-' pentru a separa versetele");
+        std::process::exit(1);
+    });
     let mut start_verse = 1;
     let mut end_verse = usize::MAX;
     if parts.len() == 3 {
@@ -119,7 +132,17 @@ impl EventHandler for Handler {
             println!("Verses: {:?}", verses);
 
             if let Some(verses) = verses {
-                let response = format!("## {}\n ### Capitolul {}\n {}", found_book, chapter_number, verses.join("\n"));
+                let response = format!(
+                    "## {}\n### Capitolul {}\n > {}",
+                    found_book,
+                    chapter_number,
+                    verses
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| format!("**{}:{}** {}", chapter_number, i + 1, v.trim_start_matches(&format!("{}:{} ", chapter_number, i + 1))))
+                        .collect::<Vec<_>>()
+                        .join("\n > ")
+                );
                 if let Err(why) = msg.channel_id.say(&ctx.http, response).await {
                     println!("Error sending message: {why:?}");
                 }
@@ -138,7 +161,7 @@ impl EventHandler for Handler {
 
 fn llm(api_key: &str, input: &str, model: &str) -> Result<String, Box<dyn Error>> {
     let client = reqwest::blocking::Client::new();
-    let system_prompt = "Esti un preot ortodox si imi raspunzi cu o singura referinta din biblia ortodoxa (atentie la psalmi!) Fc,Ies,Lv,Num,Dt,Ios,Jd,Rut,1Rg,2Rg,3Rg,4Rg,1Par,2Par,1Ezr,Ne,Est,Iov,Ps,Pr,Ecc,Cant,Is,Ir,Plg,Iz,Dn,Os,Am,Mi,Ioil,Avd,Ion,Naum,Avc,Sof,Ag,Za,Mal,Tob,Idt,Bar,Epist,Tin,3Ezr,Sol,Sir,Sus,Bel,1Mac,2Mac,3Mac,Man,Mt,Mc,Lc,In,FA,Rm,1Co,2Co,Ga,Ef,Flp,Col,1Tes,2Tes,1Tim,2Tim,Tit,Flm,Evr,Iac,1Ptr,2Ptr,1In,2In,3In,Iuda,Ap pe subiectul indicat. nu spui altceva inafara de referinta. formatul referintei este: Mt:10:20 sau Lc:20:2-3 sau Ap:1:2-4";
+    let system_prompt = "Esti un preot ortodox si imi raspunzi cu o singura referinta (unul sau mai multe versete consecutive) din biblia ortodoxa (atentie la psalmi!) Fc,Ies,Lv,Num,Dt,Ios,Jd,Rut,1Rg,2Rg,3Rg,4Rg,1Par,2Par,1Ezr,Ne,Est,Iov,Ps,Pr,Ecc,Cant,Is,Ir,Plg,Iz,Dn,Os,Am,Mi,Ioil,Avd,Ion,Naum,Avc,Sof,Ag,Za,Mal,Tob,Idt,Bar,Epist,Tin,3Ezr,Sol,Sir,Sus,Bel,1Mac,2Mac,3Mac,Man,Mt,Mc,Lc,In,FA,Rm,1Co,2Co,Ga,Ef,Flp,Col,1Tes,2Tes,1Tim,2Tim,Tit,Flm,Evr,Iac,1Ptr,2Ptr,1In,2In,3In,Iuda,Ap pe subiectul indicat. nu spui altceva inafara de referinta. formatul referintei este: Mt:10:20 sau Lc:20:2-3 sau Ap:1:2-4";
     let request_body = json!({
         "model": model,
         "messages": [
